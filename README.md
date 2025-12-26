@@ -4,6 +4,13 @@ QBridge is a modern, lightweight native bridge for iOS that lets you build hybri
 
 It is designed as a clean, native-first alternative to Cordova and Capacitor, without legacy constraints, global magic, or opaque runtime behavior.
 
+[Qbix](https://qbix.com), the company behind QBridge, designs web-first applications. We've released our entire module platform as open-source to help developers. You're welcome:
+
+* iOS: QBridge helps you easily make your web apps hybrid/native. Learn why you should be building [serverless web apps](https://qbix.com/blog/2020/01/02/the-case-for-building-client-first-web-apps/).
+* Web Front End: [**Q.js**](https://github.com/Qbix/Q.js) is a modern, modular alternative to React/Angular/Vue. Q.minimal.js it weighs 40KB to be dropped into any web app.
+* Web Full Stack: [**Qbix Platform**](https://qbix.com/platform) is battle-tested, modular framework for launching an entire site like Facebook / LinkedIn. Explore this only after you've built your serverless web apps.
+* We're also working on [AI Agents](http://engageusers.ai/ecosystem.pdf) to make all this easy to configure for non-developers starting in 2026.
+
 ---
 
 ## 🌉 What QBridge Is
