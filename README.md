@@ -4,7 +4,7 @@ QBridge is a modern, lightweight native bridge for iOS that lets you build hybri
 
 It is designed as a clean, native-first alternative to Cordova and Capacitor, without legacy constraints, global magic, or opaque runtime behavior.
 
-[Qbix](https://qbix.com), the company behind QBridge, designs web-first applications. We've released our entire module platform as open-source to help developers. You're welcome:
+[Qbix](https://qbix.com), the company behind QBridge, designs web-first applications. [Get in touch](https://qbix.com/about) if you need help or would like to collaborate with us. We've released our entire module platform as open-source to help developers. You're welcome:
 
 | Area | Software | Description |
 |---|---|---|
