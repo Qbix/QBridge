@@ -85,37 +85,45 @@ QBridge embraces native and makes it safe.
 
 Swift:
 
+```swift
 let webView = WKWebView(frame: .zero)
 QBridge.shared.attach(to: webView)
+```
 
 ### Send Messages from JavaScript
 
 JavaScript:
 
+```javascript
 window.webkit.messageHandlers.QBridge.postMessage({
   service: "DeviceBridgePlugin",
   action: "info",
   args: [],
   callbackId: "cb1"
 });
+```
 
 ### Receive Results in JavaScript
 
+```javascript
 window.QBridge = {
   onNative(payload) {
     console.log(payload.data);
   }
 };
+```
 
 ### Write Your First Plugin
 
 Swift:
 
+```swift
 @objc class MyPlugin: QBridgeBaseService {
   @objc func hello(_ args: Any?, callbackId: String?) {
     bridge.sendEvent(callbackId ?? "", data: ["message": "Hello from Swift"])
   }
 }
+```
 
 ---
 
