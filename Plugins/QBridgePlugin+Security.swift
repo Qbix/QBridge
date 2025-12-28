@@ -6,70 +6,92 @@ import CryptoKit
 
 extension QBridgePlugin {
 
-	// MARK: - Constants
+	// MARK: - Identity configuration
 
-	private static let identityKeyTag = "com.qbix.groups.secureenclave"
-	private static let keychainGroup = "com.qbix.groups.keychainshare"
+	private struct IdentityConfig {
 
-	private static let uuidAccount = "com.qbix.groups.uuid"
-	private static let uuidLegacyAccount = "com.yourapp.syncedUUID"
+		let secureEnclaveTag: Data
+		let keychainGroup: String?
+		let uuidAccount: String
+		let uuidLegacyAccount: String
+		let appAttestKeyIdAccount: String
 
-	private static let appAttestKeyIdTag = "com.qbix.groups.appattest.keyid"
+		static func load() -> IdentityConfig {
+			let defaults = UserDefaults.standard
+
+			func str(_ key: String, _ fallback: String) -> String {
+				return defaults.string(forKey: key) ?? fallback
+			}
+
+			return IdentityConfig(
+				secureEnclaveTag:
+					str("Q.Identity.SecureEnclaveTag",
+						"com.qbix.groups.secure-enclave").data(using: .utf8)!,
+				keychainGroup:
+					defaults.string(forKey: "Q.Identity.KeychainGroup"),
+				uuidAccount:
+					str("Q.Identity.UUIDAccount", "com.qbix.groups.uuid"),
+				uuidLegacyAccount:
+					str("Q.Identity.UUIDLegacyAccount", "com.yourapp.syncedUUID"),
+				appAttestKeyIdAccount:
+					str("Q.Identity.AppAttestKeyIdAccount",
+						"com.qbix.groups.appattest.keyid")
+			)
+		}
+	}
+
+	private var cfg: IdentityConfig { IdentityConfig.load() }
 
 	// MARK: - App Clip detection
 
 	private var isRunningInAppClip: Bool {
 		if #available(iOS 14.0, *) {
 			return Bundle.main.bundleURL.pathExtension == "appclip"
-				|| Bundle.main.bundleURL.lastPathComponent.contains(".appclip")
 		}
 		return false
 	}
 
-	private var effectiveAccessGroup: String? {
-		return isRunningInAppClip ? nil : Self.keychainGroup
+	private var effectiveKeychainGroup: String? {
+		return isRunningInAppClip ? nil : cfg.keychainGroup
 	}
 
-	// MARK: - Secure Enclave master key (load or create)
+	// MARK: - Secure Enclave key handling
 
-	private func loadIdentityPrivateKeyIfExists() -> SecKey? {
+	private func loadIdentityKey() -> SecKey? {
 
-		var query: [String: Any] = [
+		let query: [String: Any] = [
 			kSecClass as String: kSecClassKey,
-			kSecAttrApplicationTag as String: Self.identityKeyTag,
+			kSecAttrApplicationTag as String: cfg.secureEnclaveTag,
 			kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
 			kSecReturnRef as String: true
 		]
 
-		if let group = effectiveAccessGroup {
-			query[kSecAttrAccessGroup as String] = group
-		}
-
 		var item: CFTypeRef?
-		let status = SecItemCopyMatching(query as CFDictionary, &item)
-
-		guard status == errSecSuccess, item != nil else {
+		guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess else {
 			return nil
 		}
 
 		return (item as! SecKey)
-
 	}
 
-	private func createIdentityPrivateKey() throws -> SecKey {
+	private func createIdentityKey() throws -> SecKey {
 
-		var attrs: [String: Any] = [
+		let access =
+			SecAccessControlCreateWithFlags(
+				nil,
+				kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+				.privateKeyUsage,
+				nil
+			)!
+
+		let attrs: [String: Any] = [
 			kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
 			kSecAttrKeySizeInBits as String: 256,
 			kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
 			kSecAttrIsPermanent as String: true,
-			kSecAttrApplicationTag as String: Self.identityKeyTag,
-			kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+			kSecAttrApplicationTag as String: cfg.secureEnclaveTag,
+			kSecAttrAccessControl as String: access
 		]
-
-		if let group = effectiveAccessGroup {
-			attrs[kSecAttrAccessGroup as String] = group
-		}
 
 		var error: Unmanaged<CFError>?
 		guard let key = SecKeyCreateRandomKey(attrs as CFDictionary, &error) else {
@@ -79,84 +101,136 @@ extension QBridgePlugin {
 		return key
 	}
 
-	private func identityPublicKeyBase64(_ key: SecKey) -> String? {
-		guard let pub = SecKeyCopyPublicKey(key),
-			  let data = SecKeyCopyExternalRepresentation(pub, nil) as Data? else {
-			return nil
-		}
+	private func publicKeyBase64(_ key: SecKey) -> String? {
+		guard
+			let pub = SecKeyCopyPublicKey(key),
+			let data = SecKeyCopyExternalRepresentation(pub, nil) as Data?
+		else { return nil }
+
 		return data.base64EncodedString()
 	}
 
-	// MARK: - UUID (unchanged)
+	// MARK: - UUID handling
 
-	private func loadUUID(account: String, accessGroup: String?) -> String? {
+	private func loadUUID(account: String) -> String? {
+
 		var query: [String: Any] = [
 			kSecClass as String: kSecClassGenericPassword,
 			kSecAttrAccount as String: account,
 			kSecReturnData as String: true
 		]
-		if let group = accessGroup {
+
+		if let group = effectiveKeychainGroup {
 			query[kSecAttrAccessGroup as String] = group
 		}
+
 		var item: CFTypeRef?
-		if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-		   let data = item as? Data {
-			return String(data: data, encoding: .utf8)
-		}
-		return nil
+		guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+			  let data = item as? Data
+		else { return nil }
+
+		return String(data: data, encoding: .utf8)
 	}
 
-	private func storeUUID(_ uuid: String, account: String, accessGroup: String?) {
+	private func storeUUID(_ uuid: String, account: String) {
+
 		let data = uuid.data(using: .utf8)!
+
 		var query: [String: Any] = [
 			kSecClass as String: kSecClassGenericPassword,
 			kSecAttrAccount as String: account,
 			kSecValueData as String: data,
-			kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+			kSecAttrAccessible as String:
+				kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
 		]
-		if let group = accessGroup {
+
+		if let group = effectiveKeychainGroup {
 			query[kSecAttrAccessGroup as String] = group
 		}
+
 		SecItemDelete(query as CFDictionary)
 		SecItemAdd(query as CFDictionary, nil)
 	}
 
 	private func canonicalUUID() -> String {
-		if let uuid = loadUUID(account: Self.uuidAccount, accessGroup: effectiveAccessGroup) {
+
+		if let uuid = loadUUID(account: cfg.uuidAccount) {
 			return uuid
 		}
-		if let legacy = loadUUID(account: Self.uuidLegacyAccount, accessGroup: nil) {
-			storeUUID(legacy, account: Self.uuidAccount, accessGroup: effectiveAccessGroup)
+
+		if let legacy = loadUUID(account: cfg.uuidLegacyAccount) {
+			storeUUID(legacy, account: cfg.uuidAccount)
 			return legacy
 		}
-		let fresh = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
-		storeUUID(fresh, account: Self.uuidAccount, accessGroup: effectiveAccessGroup)
+
+		let fresh =
+			UIDevice.current.identifierForVendor?.uuidString
+			?? UUID().uuidString
+
+		storeUUID(fresh, account: cfg.uuidAccount)
 		return fresh
 	}
 
-	// MARK: - App Attest (secondary identity)
+	// MARK: - App Attest
 
-	private func attestInternal(
-		completion: @escaping ([String: Any]?, String?) -> Void
-	) {
+	private func loadAppAttestKeyId() -> String? {
+
+		var query: [String: Any] = [
+			kSecClass as String: kSecClassGenericPassword,
+			kSecAttrAccount as String: cfg.appAttestKeyIdAccount,
+			kSecReturnData as String: true
+		]
+
+		if let group = effectiveKeychainGroup {
+			query[kSecAttrAccessGroup as String] = group
+		}
+
+		var item: CFTypeRef?
+		guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+			  let data = item as? Data
+		else { return nil }
+
+		return String(data: data, encoding: .utf8)
+	}
+
+	private func storeAppAttestKeyId(_ keyId: String) {
+
+		let data = keyId.data(using: .utf8)!
+
+		var query: [String: Any] = [
+			kSecClass as String: kSecClassGenericPassword,
+			kSecAttrAccount as String: cfg.appAttestKeyIdAccount,
+			kSecValueData as String: data,
+			kSecAttrAccessible as String:
+				kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+		]
+
+		if let group = effectiveKeychainGroup {
+			query[kSecAttrAccessGroup as String] = group
+		}
+
+		SecItemDelete(query as CFDictionary)
+		SecItemAdd(query as CFDictionary, nil)
+	}
+
+	private func attest(completion: @escaping ([String: Any]?, String?) -> Void) {
+
 		guard DCAppAttestService.shared.isSupported else {
 			completion(nil, "App Attest not supported")
 			return
 		}
 
 		let timestamp = Int(Date().timeIntervalSince1970)
+		let payload = ["type": "attest", "timestamp": timestamp] as [String : Any]
 
-		let challenge: [String: Any] = [
-			"type": "attest",
-			"timestamp": timestamp
-		]
-
-		guard let canonical = QUtils.serialize(challenge) else {
-			completion(nil, "Failed to serialize attestation challenge")
+		guard let canonical = QUtils.serialize(payload),
+			  let data = canonical.data(using: .utf8)
+		else {
+			completion(nil, "Serialization failed")
 			return
 		}
 
-		let hash = Data(SHA256.hash(data: canonical.data(using: .utf8)!))
+		let hash = Data(SHA256.hash(data: data))
 		let service = DCAppAttestService.shared
 
 		let finish: (String) -> Void = { keyId in
@@ -168,7 +242,7 @@ extension QBridgePlugin {
 						"keyId": keyId
 					], nil)
 				} else {
-					completion(nil, error?.localizedDescription ?? "Attestation failed")
+					completion(nil, error?.localizedDescription)
 				}
 			}
 		}
@@ -188,38 +262,37 @@ extension QBridgePlugin {
 		}
 	}
 
-	// MARK: - Signing entry point (Master → App Attest → Create Master)
+	// MARK: - Signing entry point
 
 	@objc func sign(_ args: [Any], callbackId: String?, bridge: QBridge) {
 
-		guard let payload = args.first as? [String: Any],
-			  let canonical = QUtils.serialize(payload),
-			  let data = canonical.data(using: .utf8) else {
+		guard
+			let payload = args.first as? [String: Any],
+			let canonical = QUtils.serialize(payload),
+			let data = canonical.data(using: .utf8)
+		else {
 			bridge.sendEvent(callbackId ?? "", data: ["error": "Invalid payload"])
 			return
 		}
 
-		// 1. Existing Secure Enclave master key (continuity)
-		if let key = loadIdentityPrivateKeyIfExists() {
+		if let key = loadIdentityKey() {
 			signWithKey(key, data: data, bridge: bridge, callbackId: callbackId)
 			return
 		}
 
-		// 2. App Attest (preferred if no master key yet)
-		attestInternal { attestData, attestError in
+		attest { attestData, error in
 			if let attestData = attestData {
 				bridge.sendEvent(callbackId ?? "", data: attestData)
 				return
 			}
 
-			// 3. Create Secure Enclave master key as last resort
 			do {
-				let key = try self.createIdentityPrivateKey()
+				let key = try self.createIdentityKey()
 				self.signWithKey(key, data: data, bridge: bridge, callbackId: callbackId)
 			} catch {
 				bridge.sendEvent(
 					callbackId ?? "",
-					data: ["error": attestError ?? error.localizedDescription]
+					data: ["error": error.localizedDescription]
 				)
 			}
 		}
@@ -232,14 +305,21 @@ extension QBridgePlugin {
 		callbackId: String?
 	) {
 
+		let digest = Data(SHA256.hash(data: data))
 		var error: Unmanaged<CFError>?
-		guard let sig = SecKeyCreateSignature(
-			key,
-			.ecdsaSignatureMessageX962SHA256,
-			data as CFData,
-			&error
-		) as Data? else {
-			bridge.sendEvent(callbackId ?? "", data: ["error": error!.takeRetainedValue().localizedDescription])
+
+		guard let sig =
+			SecKeyCreateSignature(
+				key,
+				.ecdsaSignatureDigestX962SHA256,
+				digest as CFData,
+				&error
+			) as Data?
+		else {
+			bridge.sendEvent(
+				callbackId ?? "",
+				data: ["error": error!.takeRetainedValue().localizedDescription]
+			)
 			return
 		}
 
@@ -248,44 +328,11 @@ extension QBridgePlugin {
 			"interactive": false
 		]
 
-		if let pub = identityPublicKeyBase64(key) {
+		if let pub = publicKeyBase64(key) {
 			out["publicKey"] = pub
 		}
 
 		bridge.sendEvent(callbackId ?? "", data: out)
 	}
-
-	// MARK: - App Attest key storage
-
-	private func loadAppAttestKeyId() -> String? {
-		var query: [String: Any] = [
-			kSecClass as String: kSecClassGenericPassword,
-			kSecAttrAccount as String: Self.appAttestKeyIdTag,
-			kSecReturnData as String: true
-		]
-		if let group = effectiveAccessGroup {
-			query[kSecAttrAccessGroup as String] = group
-		}
-		var item: CFTypeRef?
-		if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-		   let data = item as? Data {
-			return String(data: data, encoding: .utf8)
-		}
-		return nil
-	}
-
-	private func storeAppAttestKeyId(_ keyId: String) {
-		let data = keyId.data(using: .utf8)!
-		var query: [String: Any] = [
-			kSecClass as String: kSecClassGenericPassword,
-			kSecAttrAccount as String: Self.appAttestKeyIdTag,
-			kSecValueData as String: data,
-			kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-		]
-		if let group = effectiveAccessGroup {
-			query[kSecAttrAccessGroup as String] = group
-		}
-		SecItemDelete(query as CFDictionary)
-		SecItemAdd(query as CFDictionary, nil)
-	}
 }
+
