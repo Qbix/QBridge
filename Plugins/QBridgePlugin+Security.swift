@@ -275,7 +275,7 @@ extension QBridgePlugin {
 	) {
 		let payload = args.first as? [String: Any]
 		let options = args.count > 1 ? args[1] as? [String: Any] : nil
-		let tag = options?["keyTag"] as? String ?? "com.qbix.groups.signing.default@shared"
+		let tag = options?["keyTag"] as? String ?? "com.qbix.groups.key.default@shared"
 
 		guard
 			let payload = payload,
@@ -317,7 +317,7 @@ extension QBridgePlugin {
 		bridge: QBridge
 	) {
 		let options = args.first as? [String: Any]
-		let tag = options?["keyTag"] as? String ?? "com.qbix.groups.signing.default@shared"
+		let tag = options?["keyTag"] as? String ?? "com.qbix.groups.key.default@shared"
 		
 		guard let key = loadOrCreateSigningKey(tag: tag, allowCreate: true),
 			  let publicKey = SecKeyCopyPublicKey(key),
@@ -356,7 +356,7 @@ extension QBridgePlugin {
 		}
 		
 		let options = args.count > 1 ? args[1] as? [String: Any] : nil
-		let tag = options?["keyTag"] as? String ?? "com.qbix.groups.signing.default@shared"
+		let tag = options?["keyTag"] as? String ?? "com.qbix.groups.key.default@shared"
 		
 		// Use same key as signing (ECDSA + ECIES)
 		guard let privateKey = loadOrCreateSigningKey(tag: tag, allowCreate: true) else {
@@ -555,7 +555,7 @@ extension QBridgePlugin {
 
 		let payload = args.first as? [String: Any]
 		let options = args.count > 1 ? args[1] as? [String: Any] : nil
-		let tag = options?["keyTag"] as? String ?? "com.qbix.groups.signing.default@shared"
+		let tag = options?["keyTag"] as? String ?? "com.qbix.groups.key.default@shared"
 		let parsed = parseKeyTag(tag)
 		let isInteractive = parsed.interactive
 
